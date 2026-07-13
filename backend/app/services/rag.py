@@ -2,13 +2,14 @@
 then retrieve by vector similarity over diary memory embeddings."""
 
 import logging
+from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..llm.base import ChatMessage
 from ..llm.registry import get_chat_provider, get_embedding_provider
-from ..models import Diary, DiaryMetadata, Message
+from ..models import Diary, DiaryMetadata, Memory, Message
 from .prompts import RAG_DECISION
 from .util import parse_llm_json
 
@@ -33,7 +34,11 @@ async def decide_context_need(user_message: str, recent: list[Message]) -> tuple
 
 
 async def retrieve_memories(db: AsyncSession, user_id: int, query: str, top_k: int = TOP_K) -> list[str]:
-    """Vector search over DiaryMetadata embeddings; returns formatted memory snippets."""
+    """Vector search over diary embeddings and extracted memories; returns formatted snippets.
+
+    Every memory hit bumps times_retrieved / last_referenced — the usage signal the
+    nightly memory manager consolidates on.
+    """
     vectors = await get_embedding_provider().embed([query])
     query_vec = vectors[0]
 
@@ -53,4 +58,25 @@ async def retrieve_memories(db: AsyncSession, user_id: int, query: str, top_k: i
         if facts:
             snippet += f" Key facts: {facts}"
         snippets.append(snippet)
+
+    now = datetime.now(timezone.utc)
+    mem_stmt = (
+        select(Memory)
+        .where(
+            Memory.user_id == user_id,
+            Memory.embedding.is_not(None),
+            or_(Memory.expires_at.is_(None), Memory.expires_at > now),
+        )
+        .order_by(Memory.embedding.cosine_distance(query_vec))
+        .limit(top_k)
+    )
+    memories = (await db.execute(mem_stmt)).scalars().all()
+    if memories:
+        await db.execute(
+            update(Memory)
+            .where(Memory.id.in_([m.id for m in memories]))
+            .values(times_retrieved=Memory.times_retrieved + 1, last_referenced=now)
+        )
+        await db.commit()
+        snippets.extend(f"[remembered fact] {m.text}" for m in memories)
     return snippets

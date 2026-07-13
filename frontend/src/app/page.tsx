@@ -1,10 +1,20 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type Conversation, type Message } from "@/lib/api";
-import { MicIcon, SendIcon, SparkleIcon } from "@/components/icons";
+import { api, type Attachment, type Conversation, type Message } from "@/lib/api";
+import {
+  CloseIcon,
+  FileIcon,
+  MicIcon,
+  PaperclipIcon,
+  SendIcon,
+  SparkleIcon,
+} from "@/components/icons";
 
-type LocalMessage = Pick<Message, "role" | "content"> & { id: number | string };
+type LocalMessage = Pick<Message, "role" | "content"> & {
+  id: number | string;
+  attachments?: Attachment[];
+};
 
 // Web Speech API (Chrome/Edge expose it as webkitSpeechRecognition)
 type SpeechRecognitionLike = {
@@ -35,8 +45,11 @@ export default function ChatPage() {
   const [error, setError] = useState<string | null>(null);
   const [listening, setListening] = useState(false);
   const [micSupported, setMicSupported] = useState(false);
+  const [pending, setPending] = useState<Attachment[]>([]);
+  const [uploading, setUploading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
 
   useEffect(() => {
@@ -91,21 +104,44 @@ export default function ChatPage() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, sending]);
 
+  async function attachFiles(files: FileList | null) {
+    if (!files || files.length === 0) return;
+    setUploading(true);
+    setError(null);
+    try {
+      for (const file of Array.from(files)) {
+        const att = await api.upload(file);
+        setPending((p) => [...p, att]);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Upload failed.");
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+
   async function send() {
     const text = input.trim();
-    if (!text || sending || ending) return;
+    const attachments = pending;
+    if ((!text && attachments.length === 0) || sending || ending || uploading) return;
     setInput("");
+    setPending([]);
     if (inputRef.current) inputRef.current.style.height = "auto";
     setSending(true);
     setError(null);
     const replyId = `tmp-reply-${Date.now()}`;
-    setMessages((m) => [...m, { id: `tmp-${m.length}`, role: "user", content: text }]);
+    setMessages((m) => [...m, { id: `tmp-${m.length}`, role: "user", content: text, attachments }]);
     try {
       // Stream the reply token by token; one assistant bubble grows in place.
       setMessages((m) => [...m, { id: replyId, role: "assistant", content: "" }]);
-      await api.chatStream(text, (soFar) => {
-        setMessages((m) => m.map((msg) => (msg.id === replyId ? { ...msg, content: soFar } : msg)));
-      });
+      await api.chatStream(
+        text,
+        (soFar) => {
+          setMessages((m) => m.map((msg) => (msg.id === replyId ? { ...msg, content: soFar } : msg)));
+        },
+        attachments.map((a) => a.id)
+      );
     } catch (e) {
       setMessages((m) => m.filter((msg) => !(msg.id === replyId && !msg.content)));
       setError(e instanceof Error ? e.message : "Failed to send message.");
@@ -176,12 +212,43 @@ export default function ChatPage() {
           )}
 
           <div className="space-y-7">
-            {messages.filter((m) => m.content).map((m) =>
+            {messages.filter((m) => m.content || m.attachments?.length).map((m) =>
               m.role === "user" ? (
-                <div key={m.id} className="flex justify-end">
-                  <div className="max-w-[85%] whitespace-pre-wrap rounded-3xl rounded-tr-lg bg-surface-3 px-5 py-3 text-[15px] leading-relaxed">
-                    {m.content}
-                  </div>
+                <div key={m.id} className="flex flex-col items-end gap-1.5">
+                  {m.attachments && m.attachments.length > 0 && (
+                    <div className="flex max-w-[85%] flex-wrap justify-end gap-2">
+                      {m.attachments.map((a) =>
+                        a.resource_type === "image" && !a.deleted ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            key={a.id}
+                            src={a.url}
+                            alt={a.filename}
+                            className="max-h-52 max-w-[260px] rounded-2xl object-cover"
+                          />
+                        ) : (
+                          <a
+                            key={a.id}
+                            href={a.deleted ? undefined : a.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className={`flex items-center gap-2 rounded-2xl bg-surface-2 px-3.5 py-2.5 text-sm ${
+                              a.deleted ? "cursor-default text-muted" : "text-[#c4c7c5] hover:bg-surface-3"
+                            }`}
+                          >
+                            <FileIcon className="h-4 w-4 shrink-0" />
+                            <span className="max-w-[200px] truncate">{a.filename}</span>
+                            {a.deleted && <span className="text-xs">(expired)</span>}
+                          </a>
+                        )
+                      )}
+                    </div>
+                  )}
+                  {m.content && (
+                    <div className="max-w-[85%] whitespace-pre-wrap rounded-3xl rounded-tr-lg bg-surface-3 px-5 py-3 text-[15px] leading-relaxed">
+                      {m.content}
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div key={m.id} className="flex gap-4">
@@ -223,13 +290,61 @@ export default function ChatPage() {
               </button>
             </div>
           )}
+          {(pending.length > 0 || uploading) && (
+            <div className="flex flex-wrap gap-2 pb-2">
+              {pending.map((a) => (
+                <div
+                  key={a.id}
+                  className="relative flex items-center gap-2 rounded-2xl bg-surface-2 py-1.5 pl-2 pr-8"
+                >
+                  {a.resource_type === "image" ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={a.url} alt={a.filename} className="h-10 w-10 rounded-lg object-cover" />
+                  ) : (
+                    <FileIcon className="h-5 w-5 text-[#c4c7c5]" />
+                  )}
+                  <span className="max-w-[160px] truncate text-xs text-[#c4c7c5]">{a.filename}</span>
+                  <button
+                    type="button"
+                    onClick={() => setPending((p) => p.filter((x) => x.id !== a.id))}
+                    aria-label={`Remove ${a.filename}`}
+                    className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-full p-1 text-muted transition hover:bg-surface-3 hover:text-foreground"
+                  >
+                    <CloseIcon className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ))}
+              {uploading && (
+                <div className="flex items-center gap-2 rounded-2xl bg-surface-2 px-3 py-2 text-xs text-muted">
+                  <SparkleIcon className="sparkle-thinking h-4 w-4" /> Uploading…
+                </div>
+              )}
+            </div>
+          )}
           <form
             onSubmit={(e) => {
               e.preventDefault();
               send();
             }}
-            className="flex items-end gap-2 rounded-[28px] bg-surface-2 py-2 pl-6 pr-2 transition focus-within:bg-surface-3"
+            className="flex items-end gap-2 rounded-[28px] bg-surface-2 py-2 pl-3 pr-2 transition focus-within:bg-surface-3"
           >
+            <input
+              ref={fileRef}
+              type="file"
+              multiple
+              hidden
+              onChange={(e) => attachFiles(e.target.files)}
+            />
+            <button
+              type="button"
+              onClick={() => fileRef.current?.click()}
+              disabled={ending || uploading}
+              aria-label="Attach a file"
+              title="Attach a file"
+              className="mb-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[#c4c7c5] transition hover:bg-surface-3 disabled:opacity-50"
+            >
+              <PaperclipIcon className="h-5 w-5" />
+            </button>
             <textarea
               ref={inputRef}
               value={input}
@@ -267,10 +382,10 @@ export default function ChatPage() {
             )}
             <button
               type="submit"
-              disabled={sending || ending || !input.trim()}
+              disabled={sending || ending || uploading || (!input.trim() && pending.length === 0)}
               aria-label="Send"
               className={`mb-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition ${
-                input.trim() && !sending && !ending
+                (input.trim() || pending.length > 0) && !sending && !ending && !uploading
                   ? "text-[#8ab4f8] hover:bg-surface-3"
                   : "text-surface-3"
               }`}

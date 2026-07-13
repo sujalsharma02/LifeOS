@@ -44,10 +44,43 @@ Respond with JSON only, using exactly these keys:
   "important_facts": ["facts worth remembering long-term"],
   "mood": "one or two words",
   "emotion": "dominant emotion, one word",
-  "importance_score": 0.0
+  "importance_score": 0.0,
+  "memories": [
+    {{"text": "self-contained fact worth remembering", "category": "permanent|long_term|temporary", "importance": 0.0}}
+  ]
 }}
 importance_score is 0.0-1.0: routine day ~0.3, notable ~0.6, major life event ~0.9.
+
+For "memories", extract each distinct fact as its own item, written so it makes sense
+with no other context (use names, not pronouns). Categories:
+- "permanent": stable facts about the user's life ("Her dog is named Bruno", "Lives in Shimla")
+- "long_term": ongoing pursuits that will eventually end ("Preparing for Google interviews", "Building LifeOS")
+- "temporary": one-off events with no lasting significance ("Had pizza with Sam on Tuesday")
+importance is 0.0-1.0: trivia ~0.2, useful context ~0.5, things the user would be hurt
+you forgot ~0.8+. A casual mention can still be important ("my dog had surgery" ~0.85).
 Use empty arrays when nothing applies. Never invent details not in the conversation."""
+
+MEMORY_CONSOLIDATION = """You are the nightly memory manager for a personal AI diary. Below are a user's
+stored memories as JSON, each with an id.
+
+{memories}
+
+Consolidate them:
+- MERGE duplicates or updates of the same fact into one memory, tracking progression \
+("Learning FastAPI" + "Still learning FastAPI, built first API" -> one memory with the progress). \
+Keep the merged text on the OLDEST id and delete the others.
+- UPDATE a memory whose category or importance is clearly wrong (a completed long_term goal \
+becomes temporary; a fact revealed to be lasting becomes permanent).
+- DELETE memories that are stale, superseded, or contradicted by newer ones.
+- Leave everything else untouched — when unsure, keep it. Never merge unrelated facts, \
+never invent information.
+
+Respond with JSON only:
+{{"actions": [
+  {{"op": "update", "id": 1, "text": "...", "category": "permanent|long_term|temporary", "importance": 0.0}},
+  {{"op": "delete", "id": 2}}
+]}}
+Return an empty actions list if nothing needs changing."""
 
 DIARY_STYLES: dict[str, str] = {
     "classic": "Write a classic first-person diary entry: sincere, chronological, addressed to the diary.",

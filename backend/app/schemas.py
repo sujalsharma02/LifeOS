@@ -3,12 +3,24 @@ from datetime import date, datetime
 from pydantic import BaseModel, ConfigDict
 
 
+class AttachmentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    url: str
+    filename: str
+    mime_type: str
+    resource_type: str
+    deleted: bool  # purged from Cloudinary after the retention window
+    created_at: datetime
+
+
 class MessageOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
     role: str
     content: str
     created_at: datetime
+    attachments: list[AttachmentOut] = []
 
 
 class ConversationOut(BaseModel):
@@ -21,6 +33,7 @@ class ConversationOut(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
+    attachment_ids: list[int] = []
 
 
 class ChatResponse(BaseModel):

@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -33,6 +34,20 @@ class Settings(BaseSettings):
     voyage_embedding_model: str = "voyage-3.5"
 
     cors_origins: str = "http://localhost:3000"
+
+    # Memory system. Diary entries below diary_embed_min_importance are not embedded
+    # (they stay searchable via their memories); memories below memory_embed_min_importance
+    # are stored but never embedded — Postgres keeps the truth, pgvector stays clean.
+    diary_embed_min_importance: float = 0.35
+    memory_embed_min_importance: float = 0.55
+    temporary_memory_days: int = 30
+
+    # Cloudinary (chat file uploads). Files are purged after attachment_ttl_days.
+    cloudinary_cloud_name: str = Field("", validation_alias=AliasChoices("CLOUDINARY_CLOUD_NAME", "CLOUD_NAME"))
+    cloudinary_api_key: str = Field("", validation_alias=AliasChoices("CLOUDINARY_API_KEY", "API_KEY"))
+    cloudinary_api_secret: str = Field("", validation_alias=AliasChoices("CLOUDINARY_API_SECRET", "API_SECRET"))
+    attachment_ttl_days: int = 7
+    max_upload_mb: int = 10
 
     # Google Sign-In. When google_client_id is empty, auth is disabled and the app
     # runs in single-user mode (everything belongs to one default user).

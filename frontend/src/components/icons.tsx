@@ -71,3 +71,27 @@ export function PlusIcon({ className = "" }: { className?: string }) {
     </svg>
   );
 }
+
+export function PaperclipIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="currentColor" aria-hidden>
+      <path d="M16.5 6.75v9.75a4.5 4.5 0 0 1-9 0V5.25a3 3 0 0 1 6 0v10.5a1.5 1.5 0 0 1-3 0V6.75H9v9a3 3 0 0 0 6 0V5.25a4.5 4.5 0 0 0-9 0V16.5a6 6 0 0 0 12 0V6.75h-1.5Z" />
+    </svg>
+  );
+}
+
+export function CloseIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="currentColor" aria-hidden>
+      <path d="M6.4 5 12 10.6 17.6 5 19 6.4 13.4 12 19 17.6 17.6 19 12 13.4 6.4 19 5 17.6 10.6 12 5 6.4 6.4 5Z" />
+    </svg>
+  );
+}
+
+export function FileIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="currentColor" aria-hidden>
+      <path d="M6 2h8l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Zm7 1.5V8h4.5L13 3.5ZM8 12h8v1.5H8V12Zm0 4h8v1.5H8V16Z" />
+    </svg>
+  );
+}

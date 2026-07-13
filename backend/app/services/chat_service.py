@@ -4,7 +4,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..llm.base import ChatMessage
 from ..llm.registry import get_chat_provider
-from ..models import Message, UserProfile
+from ..models import Attachment, Message, UserProfile
+from .pipeline import attachment_note, message_llm_text
 from .prompts import COMPANION_SYSTEM, MEMORIES_BLOCK, PROFILE_BLOCK
 from .rag import decide_context_need, retrieve_memories
 
@@ -30,12 +31,17 @@ async def prepare_context(
     history: list[Message],
     user_message: str,
     profile: UserProfile | None,
+    attachments: list[Attachment] | None = None,
 ) -> tuple[str, list[ChatMessage]]:
     """Build the (system prompt, message list) for a companion reply.
 
     The living profile is always loaded; diary memories only when the RAG
-    decision says historical context is needed.
+    decision says historical context is needed. Attachments on the new message
+    appear to the LLM as caption notes appended to the user text.
     """
+    if attachments:
+        notes = "\n".join(attachment_note(a) for a in attachments)
+        user_message = f"{user_message}\n{notes}".strip()
     needs_context, query = await decide_context_need(user_message, history)
     memories: list[str] = []
     if needs_context and query:
@@ -50,7 +56,7 @@ async def prepare_context(
         memories_block=MEMORIES_BLOCK.format(memories="\n".join(memories)) if memories else "",
     )
 
-    messages = [ChatMessage(role=m.role, content=m.content) for m in history]
+    messages = [ChatMessage(role=m.role, content=message_llm_text(m)) for m in history]
     messages.append(ChatMessage(role="user", content=user_message))
     return system, messages
 
@@ -61,6 +67,7 @@ async def generate_reply(
     history: list[Message],
     user_message: str,
     profile: UserProfile | None,
+    attachments: list[Attachment] | None = None,
 ) -> str:
-    system, messages = await prepare_context(db, user_id, history, user_message, profile)
+    system, messages = await prepare_context(db, user_id, history, user_message, profile, attachments)
     return await get_chat_provider().chat(messages, system=system, temperature=0.8)

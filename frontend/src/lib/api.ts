@@ -37,11 +37,22 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+export interface Attachment {
+  id: number;
+  url: string;
+  filename: string;
+  mime_type: string;
+  resource_type: "image" | "video" | "raw";
+  deleted: boolean;
+  created_at: string;
+}
+
 export interface Message {
   id: number;
   role: "user" | "assistant";
   content: string;
   created_at: string;
+  attachments: Attachment[];
 }
 
 export interface Conversation {
@@ -175,13 +186,37 @@ export const api = {
   conversation: (id: number) => request<Conversation>(`/api/conversations/${id}`),
   messages: (conversationId: number) =>
     request<Message[]>(`/api/conversations/${conversationId}/messages`),
-  chat: (message: string) =>
+  chat: (message: string, attachmentIds: number[] = []) =>
     request<{ conversation_id: number; reply: string }>("/api/chat", {
       method: "POST",
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, attachment_ids: attachmentIds }),
     }),
+  /** Uploads a chat attachment (multipart). The browser sets the content type. */
+  upload: async (file: File): Promise<Attachment> => {
+    const token = getToken();
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch(`${API_URL}/api/uploads`, {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: form,
+    });
+    if (res.status === 401 && token) {
+      clearToken();
+      window.location.reload();
+    }
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`API ${res.status}: ${body || res.statusText}`);
+    }
+    return res.json() as Promise<Attachment>;
+  },
   /** Streams the reply via SSE; onUpdate receives the full text so far. Returns the final reply. */
-  chatStream: async (message: string, onUpdate: (textSoFar: string) => void): Promise<string> => {
+  chatStream: async (
+    message: string,
+    onUpdate: (textSoFar: string) => void,
+    attachmentIds: number[] = []
+  ): Promise<string> => {
     const token = getToken();
     const res = await fetch(`${API_URL}/api/chat/stream`, {
       method: "POST",
@@ -189,7 +224,7 @@ export const api = {
         "Content-Type": "application/json",
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, attachment_ids: attachmentIds }),
     });
     if (res.status === 401 && token) {
       clearToken();

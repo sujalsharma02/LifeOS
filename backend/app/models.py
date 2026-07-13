@@ -1,7 +1,7 @@
 from datetime import date, datetime, timezone
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Date, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -54,6 +54,47 @@ class Message(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     conversation: Mapped["Conversation"] = relationship(back_populates="messages")
+    attachments: Mapped[list["Attachment"]] = relationship(back_populates="message")
+
+
+class Attachment(Base):
+    """A file uploaded into chat (stored on Cloudinary, purged after a week)."""
+
+    __tablename__ = "attachments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    message_id: Mapped[int | None] = mapped_column(ForeignKey("messages.id"), nullable=True, index=True)
+    url: Mapped[str] = mapped_column(Text)
+    public_id: Mapped[str] = mapped_column(String(255))
+    resource_type: Mapped[str] = mapped_column(String(20), default="image")  # image | raw | video
+    filename: Mapped[str] = mapped_column(String(255))
+    mime_type: Mapped[str] = mapped_column(String(100), default="")
+    caption: Mapped[str] = mapped_column(Text, default="")  # LLM-visible description
+    deleted: Mapped[bool] = mapped_column(Boolean, default=False)  # purged from Cloudinary
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    message: Mapped["Message | None"] = relationship(back_populates="attachments")
+
+
+class Memory(Base):
+    """A single extracted memory. Postgres is the source of truth; the embedding
+    (present only above the importance threshold) is just the search index."""
+
+    __tablename__ = "memories"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    diary_id: Mapped[int | None] = mapped_column(ForeignKey("diaries.id"), nullable=True, index=True)
+    text: Mapped[str] = mapped_column(Text)
+    category: Mapped[str] = mapped_column(String(20), default="temporary")  # permanent | long_term | temporary
+    importance: Mapped[float] = mapped_column(Float, default=0.5)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    times_retrieved: Mapped[int] = mapped_column(Integer, default=0)
+    last_referenced: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBED_DIM), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
 class Diary(Base):
