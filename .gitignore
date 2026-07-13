@@ -17,3 +17,5 @@ frontend/out/
 .DS_Store
 *.log
 exports/
+
+*.pdf
