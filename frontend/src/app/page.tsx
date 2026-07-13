@@ -1,8 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { api, type Attachment, type Conversation, type Message } from "@/lib/api";
+import { CHATS_CHANGED_EVENT } from "@/components/Sidebar";
 import {
+  BookIcon,
   CloseIcon,
   FileIcon,
   MicIcon,
@@ -10,6 +14,10 @@ import {
   SendIcon,
   SparkleIcon,
 } from "@/components/icons";
+
+function notifyChatsChanged() {
+  window.dispatchEvent(new Event(CHATS_CHANGED_EVENT));
+}
 
 type LocalMessage = Pick<Message, "role" | "content"> & {
   id: number | string;
@@ -36,8 +44,14 @@ function getSpeechRecognition(): (new () => SpeechRecognitionLike) | null {
     | null;
 }
 
-export default function ChatPage() {
+function ChatView() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const viewId = searchParams.get("c"); // set -> read-only view of a past chat
+  const wantNew = searchParams.get("new") === "1";
+
   const [conversation, setConversation] = useState<Conversation | null>(null);
+  const [viewing, setViewing] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<LocalMessage[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -97,8 +111,42 @@ export default function ChatPage() {
   }, []);
 
   useEffect(() => {
-    loadConversation();
-  }, [loadConversation]);
+    if (!viewId) {
+      setViewing(null);
+      loadConversation();
+      return;
+    }
+    (async () => {
+      try {
+        const conv = await api.conversation(Number(viewId));
+        if (conv.status === "active") {
+          router.replace("/"); // the "past" chat is actually the live one
+          return;
+        }
+        setViewing(conv);
+        setMessages(await api.messages(conv.id));
+        setError(null);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Could not load that conversation.");
+      }
+    })();
+  }, [viewId, loadConversation, router]);
+
+  // "New chat": end the current conversation (writing its diary) and start fresh.
+  const newHandled = useRef(false);
+  useEffect(() => {
+    if (!wantNew) {
+      newHandled.current = false;
+      return;
+    }
+    if (viewId || newHandled.current || !conversation) return;
+    newHandled.current = true;
+    if (messages.length > 0 && conversation.status === "active") {
+      endConversation();
+    }
+    router.replace("/");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wantNew, viewId, conversation, messages.length, router]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -124,7 +172,7 @@ export default function ChatPage() {
   async function send() {
     const text = input.trim();
     const attachments = pending;
-    if ((!text && attachments.length === 0) || sending || ending || uploading) return;
+    if ((!text && attachments.length === 0) || sending || ending || uploading || viewing) return;
     setInput("");
     setPending([]);
     if (inputRef.current) inputRef.current.style.height = "auto";
@@ -142,6 +190,7 @@ export default function ChatPage() {
         },
         attachments.map((a) => a.id)
       );
+      notifyChatsChanged();
     } catch (e) {
       setMessages((m) => m.filter((msg) => !(msg.id === replyId && !msg.content)));
       setError(e instanceof Error ? e.message : "Failed to send message.");
@@ -166,6 +215,7 @@ export default function ChatPage() {
             if (c.status === "failed") {
               setError("Diary generation failed — check the backend logs.");
             }
+            notifyChatsChanged();
             await loadConversation();
           }
         } catch {
@@ -185,7 +235,28 @@ export default function ChatPage() {
       {/* Messages / greeting */}
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-[760px] px-4 pb-6 pt-8 md:px-6">
-          {empty && !error && (
+          {viewing && (
+            <div className="mb-7 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-2xl bg-surface-2 px-4 py-3 text-sm text-[#c4c7c5]">
+              <span>
+                Past conversation from{" "}
+                {new Date(viewing.started_at).toLocaleDateString(undefined, {
+                  month: "long",
+                  day: "numeric",
+                  year: "numeric",
+                })}{" "}
+                — read-only.
+              </span>
+              {viewing.diary_id && (
+                <Link
+                  href={`/diary/${viewing.diary_id}`}
+                  className="flex items-center gap-1.5 text-[#c2e7ff] hover:underline"
+                >
+                  <BookIcon className="h-4 w-4" /> Open its diary entry
+                </Link>
+              )}
+            </div>
+          )}
+          {empty && !error && !viewing && (
             <div className="pt-[18vh]">
               <h1 className="gemini-gradient-text text-4xl font-medium leading-tight md:text-5xl">
                 Hello there
@@ -277,9 +348,20 @@ export default function ChatPage() {
         </div>
       </div>
 
-      {/* Composer */}
+      {/* Composer (or a back link when viewing a past chat) */}
       <div className="shrink-0 pb-5">
         <div className="mx-auto w-full max-w-[760px] px-4 md:px-6">
+          {viewing ? (
+            <div className="flex justify-center">
+              <Link
+                href="/"
+                className="rounded-full border border-surface-3 px-5 py-2 text-sm font-medium text-[#c2e7ff] transition hover:bg-surface-2"
+              >
+                ← Back to today&apos;s chat
+              </Link>
+            </div>
+          ) : (
+            <>
           {!empty && !ending && (
             <div className="flex justify-end pb-2">
               <button
@@ -396,8 +478,19 @@ export default function ChatPage() {
           <p className="pt-2.5 text-center text-[11px] text-muted">
             LifeOS turns this conversation into a diary entry when you end it.
           </p>
+            </>
+          )}
         </div>
       </div>
     </div>
+  );
+}
+
+export default function ChatPage() {
+  // useSearchParams requires a Suspense boundary during static prerendering.
+  return (
+    <Suspense fallback={null}>
+      <ChatView />
+    </Suspense>
   );
 }

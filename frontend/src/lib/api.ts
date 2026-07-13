@@ -60,6 +60,17 @@ export interface Conversation {
   status: "active" | "processing" | "completed" | "failed";
   started_at: string;
   ended_at: string | null;
+  diary_id?: number | null;
+}
+
+export interface ConversationSummary {
+  id: number;
+  status: "active" | "processing" | "completed" | "failed";
+  started_at: string;
+  ended_at: string | null;
+  title: string | null;
+  diary_id: number | null;
+  message_count: number;
 }
 
 export interface Diary {
@@ -183,6 +194,7 @@ export const api = {
     }),
   me: () => request<AuthUser>("/api/auth/me"),
   activeConversation: () => request<Conversation>("/api/conversations/active"),
+  conversations: () => request<ConversationSummary[]>("/api/conversations"),
   conversation: (id: number) => request<Conversation>(`/api/conversations/${id}`),
   messages: (conversationId: number) =>
     request<Message[]>(`/api/conversations/${conversationId}/messages`),

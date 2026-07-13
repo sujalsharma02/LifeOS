@@ -29,6 +29,19 @@ class ConversationOut(BaseModel):
     status: str
     started_at: datetime
     ended_at: datetime | None
+    diary_id: int | None = None
+
+
+class ConversationSummaryOut(BaseModel):
+    """Sidebar chat-history item: a conversation plus the diary it produced."""
+
+    id: int
+    status: str
+    started_at: datetime
+    ended_at: datetime | None
+    title: str | None  # from the diary entry, once the pipeline has run
+    diary_id: int | None
+    message_count: int
 
 
 class ChatRequest(BaseModel):

@@ -3,15 +3,15 @@ import logging
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from ..db import get_session_factory
 from ..deps import get_current_user, require_db
 from ..llm.registry import get_chat_provider
-from ..models import Attachment, Conversation, Message, User, UserProfile
-from ..schemas import ChatRequest, ChatResponse, ConversationOut, MessageOut
+from ..models import Attachment, Conversation, Diary, Message, User, UserProfile
+from ..schemas import ChatRequest, ChatResponse, ConversationOut, ConversationSummaryOut, MessageOut
 from ..services.chat_service import generate_reply, prepare_context
 from ..services.pipeline import process_conversation
 from ..models import utcnow
@@ -73,6 +73,37 @@ async def get_active_conversation(
     db: AsyncSession = Depends(require_db), user: User = Depends(get_current_user)
 ):
     return await _active_conversation(db, user)
+
+
+@router.get("/conversations", response_model=list[ConversationSummaryOut])
+async def list_conversations(
+    db: AsyncSession = Depends(require_db), user: User = Depends(get_current_user)
+):
+    """Chat history, newest first. Empty conversations are omitted; the title
+    comes from the diary entry the conversation produced (null until then)."""
+    msg_count = func.count(Message.id)
+    stmt = (
+        select(Conversation, Diary.id, Diary.title, msg_count)
+        .outerjoin(Diary, Diary.conversation_id == Conversation.id)
+        .join(Message, Message.conversation_id == Conversation.id)
+        .where(Conversation.user_id == user.id)
+        .group_by(Conversation.id, Diary.id, Diary.title)
+        .order_by(Conversation.id.desc())
+        .limit(100)
+    )
+    rows = (await db.execute(stmt)).all()
+    return [
+        ConversationSummaryOut(
+            id=conv.id,
+            status=conv.status,
+            started_at=conv.started_at,
+            ended_at=conv.ended_at,
+            title=title,
+            diary_id=diary_id,
+            message_count=count,
+        )
+        for conv, diary_id, title, count in rows
+    ]
 
 
 @router.get("/conversations/{conversation_id}/messages", response_model=list[MessageOut])
@@ -206,4 +237,9 @@ async def get_conversation(
     conv = await db.get(Conversation, conversation_id)
     if conv is None or conv.user_id != user.id:
         raise HTTPException(404, "Conversation not found")
-    return conv
+    diary_id = (
+        await db.execute(select(Diary.id).where(Diary.conversation_id == conv.id).limit(1))
+    ).scalar_one_or_none()
+    out = ConversationOut.model_validate(conv)
+    out.diary_id = diary_id
+    return out
