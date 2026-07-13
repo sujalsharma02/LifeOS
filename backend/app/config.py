@@ -21,6 +21,9 @@ class Settings(BaseSettings):
 
     gemini_api_key: str = ""
     gemini_chat_model: str = "gemini-3.5-flash"
+    # Tried when the main Gemini model stays overloaded (503) after retries.
+    # Set empty to disable. Flagship flash models get demand spikes; lite rarely does.
+    gemini_fallback_model: str = "gemini-flash-lite-latest"
     gemini_embedding_model: str = "gemini-embedding-001"
     embedding_dimensions: int = 768
 

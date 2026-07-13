@@ -7,7 +7,7 @@ An AI companion you talk to instead of writing a journal. It chats with you abou
 - **Frontend** — Next.js 16 + Tailwind CSS (`frontend/`)
 - **Backend** — FastAPI + SQLAlchemy async (`backend/`)
 - **Database** — Neon (serverless PostgreSQL) + pgvector
-- **LLM** — provider abstraction (`backend/app/llm/`): NVIDIA Build API first, automatic fallback to Gemini when NVIDIA is unavailable (5-minute cooldown between retries); Voyage AI for embeddings (embeddings never fall back — mixing embedding models breaks vector search)
+- **LLM** — provider abstraction (`backend/app/llm/`): NVIDIA Build API first, automatic fallback to Gemini when NVIDIA is unavailable (5-minute cooldown between retries); within Gemini, transient 503/429s are retried and a lite model (`GEMINI_FALLBACK_MODEL`) takes over if the flagship stays overloaded. Voyage AI for embeddings (embeddings never fall back — mixing embedding models breaks vector search)
 
 ## Setup
 

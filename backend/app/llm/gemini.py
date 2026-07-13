@@ -30,6 +30,27 @@ class GeminiProvider(LLMProvider):
         self.chat_model = settings.gemini_chat_model
         self.embedding_model = settings.gemini_embedding_model
         self.embedding_dimensions = settings.embedding_dimensions
+        self.fallback_model = settings.gemini_fallback_model
+
+    def _chat_models(self) -> list[str]:
+        """Configured model first; the lite fallback if it stays overloaded."""
+        models = [self.chat_model]
+        if self.fallback_model and self.fallback_model != self.chat_model:
+            models.append(self.fallback_model)
+        return models
+
+    async def _post_with_retry(self, client: httpx.AsyncClient, model: str, body: dict) -> httpx.Response:
+        for delay in (*RETRY_DELAYS, None):
+            resp = await client.post(
+                f"{BASE_URL}/models/{model}:generateContent",
+                params={"key": self.api_key},
+                json=body,
+            )
+            if resp.status_code in RETRY_STATUSES and delay is not None:
+                await asyncio.sleep(delay)
+                continue
+            break
+        return resp
 
     async def chat(
         self,
@@ -49,16 +70,10 @@ class GeminiProvider(LLMProvider):
             body["generationConfig"]["responseMimeType"] = "application/json"
 
         async with httpx.AsyncClient(timeout=120) as client:
-            for delay in (*RETRY_DELAYS, None):
-                resp = await client.post(
-                    f"{BASE_URL}/models/{self.chat_model}:generateContent",
-                    params={"key": self.api_key},
-                    json=body,
-                )
-                if resp.status_code in RETRY_STATUSES and delay is not None:
-                    await asyncio.sleep(delay)
-                    continue
-                break
+            for model in self._chat_models():
+                resp = await self._post_with_retry(client, model, body)
+                if resp.status_code not in RETRY_STATUSES:
+                    break
             resp.raise_for_status()
             data = resp.json()
         try:
@@ -79,29 +94,33 @@ class GeminiProvider(LLMProvider):
         if system:
             body["systemInstruction"] = {"parts": [{"text": system}]}
 
+        models = self._chat_models()
         async with httpx.AsyncClient(timeout=120) as client:
-            for delay in (*RETRY_DELAYS, None):
-                async with client.stream(
-                    "POST",
-                    f"{BASE_URL}/models/{self.chat_model}:streamGenerateContent",
-                    params={"key": self.api_key, "alt": "sse"},
-                    json=body,
-                ) as resp:
-                    if resp.status_code in RETRY_STATUSES and delay is not None:
-                        await asyncio.sleep(delay)
-                        continue
-                    resp.raise_for_status()
-                    async for line in resp.aiter_lines():
-                        if not line.startswith("data: "):
-                            continue
-                        try:
-                            chunk = json.loads(line[6:])
-                            text = chunk["candidates"][0]["content"]["parts"][0]["text"]
-                        except (json.JSONDecodeError, KeyError, IndexError):
-                            continue
-                        if text:
-                            yield text
-                return
+            for m, model in enumerate(models):
+                for delay in (*RETRY_DELAYS, None):
+                    async with client.stream(
+                        "POST",
+                        f"{BASE_URL}/models/{model}:streamGenerateContent",
+                        params={"key": self.api_key, "alt": "sse"},
+                        json=body,
+                    ) as resp:
+                        if resp.status_code in RETRY_STATUSES and (delay is not None or m < len(models) - 1):
+                            if delay is not None:
+                                await asyncio.sleep(delay)
+                                continue
+                            break  # retries exhausted — move to the fallback model
+                        resp.raise_for_status()
+                        async for line in resp.aiter_lines():
+                            if not line.startswith("data: "):
+                                continue
+                            try:
+                                chunk = json.loads(line[6:])
+                                text = chunk["candidates"][0]["content"]["parts"][0]["text"]
+                            except (json.JSONDecodeError, KeyError, IndexError):
+                                continue
+                            if text:
+                                yield text
+                        return
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         results: list[list[float]] = []
